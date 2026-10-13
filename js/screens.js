@@ -1,10 +1,12 @@
 // Экраны: приветствие, карта уровней, обёртка уровня, итог уровня,
 // итоговый профиль, «Об авторе и методике», настройки.
 
-import { user, inTelegram, mainButton, openLink, confirmDialog, canNativeConfirm, shareMessage } from './telegram.js';
+import { user, inTelegram, mainButton, backButton, openLink, confirmDialog, canNativeConfirm, shareMessage } from './telegram.js';
 import {
   h, fmt, plural, icon, stars, avatar, topbar, sheet, toast, confetti, hearsBlock, confirmSheet,
+  holdTimers, releaseTimers,
 } from './ui.js';
+import { mountLesson } from './lesson.js';
 import * as swipe from './levels/swipe.js';
 import * as fix from './levels/fix.js';
 import * as build from './levels/build.js';
@@ -37,12 +39,19 @@ export function welcome(root, _p, ctx) {
       h('p', { class: 'welcome-lead' }, w.lead),
       h('ul', { class: 'welcome-facts' }, w.facts.map((f) => h('li', null, f))),
     ),
+    h('section', { class: 'welcome-choice' },
+      h('p', { class: 'welcome-question' }, w.question),
+      h('p', { class: 'welcome-hint' }, w.ctaLearnHint),
+      h('button', { class: 'btn btn-secondary btn-block', onclick: () => choose('practice') }, w.ctaPractice),
+    ),
   );
-  mainButton.show(w.cta, () => {
+
+  function choose(path) {
     ctx.state.welcomed = true;
-    ctx.save();
+    ctx.setPath(path, 'welcome');
     ctx.go('map');
-  });
+  }
+  mainButton.show(w.ctaLearn, () => choose('learn'));
 }
 
 // Небольшая «переписка» персонажей вместо иллюстрации.
@@ -103,9 +112,7 @@ function levelCard(L, ctx) {
     h('span', { class: 'lvl-body' },
       h('span', { class: 'lvl-title' }, L.title),
       h('span', { class: 'lvl-goal' }, L.goal),
-      h('span', { class: 'lvl-meta' }, status === 'locked'
-        ? fmt(ui.lockedHint, { n: L.id - 1 })
-        : `${countLabel(L)}, ${L.duration}`),
+      h('span', { class: 'lvl-meta' }, levelMeta(L, status, inRun, ctx)),
     ),
     h('span', { class: 'lvl-aside' }, aside),
   ];
@@ -121,6 +128,17 @@ function levelCard(L, ctx) {
   );
 }
 
+function levelMeta(L, status, inRun, ctx) {
+  const ui = ctx.content.ui;
+  if (status === 'locked') return fmt(ui.lockedHint, { n: L.id - 1 });
+  if (L.lesson && !inRun && status === 'open' && lessonPending(L, ctx)) {
+    return fmt(ui.metaWithLesson, { lesson: L.lesson.duration, count: countLabel(L), duration: L.duration });
+  }
+  return `${countLabel(L)}, ${L.duration}`;
+}
+
+const lessonPending = (L, ctx) => Boolean(L.lesson) && ctx.lessonsOn() && !ctx.state.lessonsSeen[L.id];
+
 function profileTeaser(ctx) {
   const p = computeProfile(ctx);
   return h('button', { class: 'teaser', onclick: () => ctx.go('result') },
@@ -132,19 +150,25 @@ function profileTeaser(ctx) {
 
 /* ================= Уровень (обёртка) ================= */
 
-export function level(root, { id }, ctx) {
+export function level(root, { id, afterLesson }, ctx) {
   const L = ctx.level(id);
   const ui = ctx.content.ui;
   if (!L || !ctx.isUnlocked(id)) { ctx.go('map'); return null; }
 
   let moduleCleanup = null;
+  let closeHelp = null;
   const back = () => ctx.go('map');
 
-  // Интро: одна-две строки о механике, без теории.
   const resuming = ctx.state.run && ctx.state.run.level === id;
   const done = ctx.state.levels[id] && ctx.state.levels[id].done;
   const run = resuming ? ctx.state.run : null;
   const position = run ? (L.type === 'dialog' ? run.dlg.d : run.idx) : 0;
+
+  // Путь «с уроками»: перед первым входом в уровень показываем урок.
+  if (!resuming && !afterLesson && lessonPending(L, ctx)) {
+    ctx.go('lesson', { id, source: 'auto' });
+    return null;
+  }
 
   root.className = 'screen screen--intro';
   put(root, 
@@ -158,6 +182,10 @@ export function level(root, { id }, ctx) {
       resuming && position > 0
         ? h('p', { class: 'intro-resume' }, fmt(ui.resume, { n: position + 1, total: countOf(L) }))
         : null,
+      L.lesson ? h('button', {
+        class: 'link-btn intro-refresh',
+        onclick: () => ctx.go('lesson', { id, source: 'refresh' }),
+      }, icon('book', 18), fmt(ui.lessonRefresh, { duration: L.lesson.duration })) : null,
     ),
   );
 
@@ -174,7 +202,8 @@ export function level(root, { id }, ctx) {
     root.replaceChildren();
     root.className = `screen screen--level screen--${L.type}`;
     const progress = h('span', null, '');
-    const bar = topbar({ title: L.title, progress, onBack: back });
+    const help = L.lesson ? { label: ui.lessonHelp, onClick: openHelp } : null;
+    const bar = topbar({ title: L.title, progress, onBack: back, help });
     const stage = h('main', { class: 'stage' });
     put(root, bar, stage);
 
@@ -194,7 +223,73 @@ export function level(root, { id }, ctx) {
     moduleCleanup = MODULES[L.type].mount(stage, api);
   }
 
-  return () => { if (typeof moduleCleanup === 'function') moduleCleanup(); };
+  // «?» внутри уровня: урок поверх задания, таймеры на паузе, прогресс не теряется.
+  function openHelp() {
+    if (closeHelp) return;
+    holdTimers();
+    const opener = document.activeElement;
+    const layer = h('div', { class: 'lesson-overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': L.lesson.title });
+    const inner = h('div', { class: 'screen screen--lesson' });
+    layer.append(inner);
+    document.body.append(layer);
+    document.body.classList.add('has-overlay');
+
+    let lessonCleanup = null;
+    closeHelp = () => {
+      if (typeof lessonCleanup === 'function') lessonCleanup();
+      layer.remove();
+      document.body.classList.remove('has-overlay');
+      closeHelp = null;
+      backButton.show(back);
+      releaseTimers();
+      if (opener && opener.focus) opener.focus({ preventScroll: true });
+    };
+    lessonCleanup = mountLesson(inner, {
+      L, content: ctx.content, ui, mode: 'help', track: ctx.track,
+      onBack: () => closeHelp(),
+      onDone: () => closeHelp(),
+      onSkip: () => closeHelp(),
+    });
+  }
+
+  return () => {
+    if (closeHelp) closeHelp();
+    if (typeof moduleCleanup === 'function') moduleCleanup();
+  };
+}
+
+/* ================= Урок перед уровнем ================= */
+
+export function lesson(root, { id, source = 'auto' }, ctx) {
+  const L = ctx.level(id);
+  if (!L || !L.lesson || !ctx.isUnlocked(id)) { ctx.go('map'); return null; }
+
+  const saved = ctx.state.lesson && ctx.state.lesson.level === id ? ctx.state.lesson : null;
+  ctx.state.lesson = { level: id, card: saved ? saved.card : 0, source, away: false };
+  ctx.save();
+
+  const finish = () => {
+    ctx.state.lessonsSeen[id] = true;
+    ctx.state.lesson = null;
+    ctx.save();
+    ctx.go('level', { id, afterLesson: true });
+  };
+
+  root.className = 'screen screen--lesson';
+  return mountLesson(root, {
+    L, content: ctx.content, ui: ctx.content.ui, mode: source, track: ctx.track,
+    startCard: saved ? saved.card : 0,
+    onCard: (i) => { ctx.state.lesson.card = i; ctx.save(); },
+    onBack: () => {
+      // Вышел на карту сам: при следующем запуске не открываем урок автоматически,
+      // но запоминаем карточку, чтобы продолжить с неё.
+      ctx.state.lesson.away = true;
+      ctx.save();
+      ctx.go('map');
+    },
+    onDone: finish,
+    onSkip: finish,
+  });
 }
 
 /* ================= Итог уровня ================= */
@@ -369,6 +464,13 @@ function authorCard(ctx) {
         // В Telegram ссылки открываются средствами клиента.
         onclick: (e) => { if (inTelegram) { e.preventDefault(); openLink(l.url); } },
       }, l.label, icon('link', 15))))),
+    a.contact ? h('div', { class: 'author-contact' },
+      h('p', { class: 'author-contact-text' }, a.contact.text),
+      h('a', {
+        class: 'btn btn-secondary author-contact-btn', href: a.contact.url, target: '_blank', rel: 'noopener',
+        onclick: (e) => { if (inTelegram) { e.preventDefault(); openLink(a.contact.url); } },
+      }, icon('chat', 18), a.contact.label),
+    ) : null,
   );
 }
 
@@ -405,20 +507,28 @@ export function about(root, _p, ctx) {
 export function openSettings(ctx) {
   const ui = ctx.content.ui;
   const s = ctx.state.settings;
-  const toggle = (key, label, hint) => {
-    const input = h('input', { type: 'checkbox', role: 'switch' });
-    input.checked = Boolean(s[key]);
-    input.addEventListener('change', () => { s[key] = input.checked; ctx.save(); });
-    return h('label', { class: 'setting' },
+  const toggle = (id, label, hint, get, set) => {
+    const input = h('input', { type: 'checkbox', role: 'switch', id: `setting-${id}` });
+    input.checked = Boolean(get());
+    input.addEventListener('change', () => set(input.checked));
+    return h('label', { class: 'setting', for: `setting-${id}` },
       h('span', null, h('span', { class: 'setting-label' }, label), h('span', { class: 'setting-hint' }, hint)),
       input,
     );
   };
+  const flag = (key) => [() => s[key], (v) => { s[key] = v; ctx.save(); }];
   let close;
   const content = h('div', { class: 'settings' },
     h('h2', { class: 'sheet-title' }, ui.settings),
-    toggle('timerSwipe', ui.settingTimerSwipe, ui.settingTimerSwipeHint),
-    toggle('timerDialog', ui.settingTimerDialog, ui.settingTimerDialogHint),
+    toggle('lessons', ui.settingLessons, ui.settingLessonsHint,
+      () => ctx.lessonsOn(),
+      (v) => {
+        ctx.setPath(v ? 'learn' : 'practice', 'settings');
+        // Обновляем подписи на карте, если она открыта.
+        if (document.querySelector('.screen--map')) ctx.go('map');
+      }),
+    toggle('timerSwipe', ui.settingTimerSwipe, ui.settingTimerSwipeHint, ...flag('timerSwipe')),
+    toggle('timerDialog', ui.settingTimerDialog, ui.settingTimerDialogHint, ...flag('timerDialog')),
     h('p', { class: 'setting-note' }, ui.storedNote),
     h('button', {
       class: 'btn btn-danger btn-block',

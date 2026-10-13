@@ -10,6 +10,9 @@ export function emptyState() {
   return {
     v: 1,
     welcomed: false,
+    path: null,       // 'learn' — с уроками перед уровнями, 'practice' — сразу к практике
+    lessonsSeen: {},  // id уровня -> true, урок пройден или пропущен
+    lesson: null,     // открытый урок: { level, card, source, away }
     settings: { timerSwipe: true, timerDialog: true },
     levels: {},   // id -> { done, stars, bestScore, lastScore, maxScore, errors, answered, wrong, extra }
     run: null,    // незаконченный уровень, см. app.js → newRun()

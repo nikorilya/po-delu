@@ -54,6 +54,9 @@ const ICONS = {
   minus: '<path d="M6 12h12" />',
   clock: '<circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" />',
   link: '<path d="M14 5h5v5M19 5l-8 8" /><path d="M17 14v4a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 5 18V8.5A1.5 1.5 0 0 1 6.5 7H10" />',
+  chat: '<path d="M20 12a7.5 7.5 0 0 1-11 6.6L4.5 20l1.4-4.3A7.5 7.5 0 1 1 20 12z" />',
+  help: '<circle cx="12" cy="12" r="8.5" /><path d="M9.6 9.4a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.7" /><path d="M12 16.9h.01" />',
+  book: '<path d="M4.5 5.5A1.5 1.5 0 0 1 6 4h4.5A1.5 1.5 0 0 1 12 5.5V20a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 1 4.5 17z" /><path d="M19.5 5.5A1.5 1.5 0 0 0 18 4h-4.5A1.5 1.5 0 0 0 12 5.5V20a1.5 1.5 0 0 1 1.5-1.5H18a1.5 1.5 0 0 0 1.5-1.5z" />',
 };
 
 export function icon(name, size = 20, cls = '') {
@@ -85,14 +88,18 @@ export function avatar(character, size = 36) {
 
 /* ---------- Верхняя строка экрана ---------- */
 
-export function topbar({ title, progress, onBack, right }) {
+export function topbar({ title, progress, onBack, right, help }) {
   const nativeBack = onBack ? backButton.show(onBack) : false;
   return h('header', { class: 'topbar' },
     onBack && !nativeBack
-      ? h('button', { class: 'icon-btn', 'aria-label': 'Назад', onclick: onBack }, icon('back', 22))
+      ? h('button', { class: 'icon-btn topbar-back', 'aria-label': 'Назад', onclick: onBack }, icon('back', 22))
       : h('span', { class: 'topbar-spacer' }),
     h('div', { class: 'topbar-title' }, title || ''),
-    progress != null ? h('div', { class: 'topbar-progress', 'aria-live': 'polite' }, progress) : (right || h('span', { class: 'topbar-spacer' })),
+    h('div', { class: 'topbar-right' },
+      progress != null ? h('div', { class: 'topbar-progress', 'aria-live': 'polite' }, progress) : null,
+      help ? h('button', { class: 'icon-btn topbar-help', 'aria-label': help.label, title: help.label, onclick: help.onClick }, icon('help', 22)) : null,
+      right || null,
+    ),
   );
 }
 
@@ -194,12 +201,27 @@ export function toast(text) {
 /* ---------- Таймер с паузой ---------- */
 
 const live = new Set();
+let holds = 0; // сколько слоёв (например, урок поверх уровня) держат таймеры на паузе
+
 document.addEventListener('visibilitychange', () => {
   for (const c of live) {
     if (document.visibilityState === 'hidden') c.pause();
-    else c.resume();
+    else if (holds === 0) c.resume();
   }
 });
+
+/** Ставит все таймеры на паузу, пока открыт слой поверх уровня. */
+export function holdTimers() {
+  holds += 1;
+  for (const c of live) c.pause();
+}
+
+export function releaseTimers() {
+  holds = Math.max(0, holds - 1);
+  if (holds === 0 && document.visibilityState !== 'hidden') {
+    for (const c of live) c.resume();
+  }
+}
 
 export class Countdown {
   constructor({ seconds, fill, onExpire }) {
@@ -212,8 +234,8 @@ export class Countdown {
   start() {
     this.left = this.total;
     this.render(1);
-    this.resume();
     live.add(this);
+    if (holds === 0) this.resume();
   }
   resume() {
     if (this.running || this.left == null || this.left <= 0) return;

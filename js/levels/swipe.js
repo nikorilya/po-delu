@@ -30,7 +30,7 @@ export function mount(root, api) {
   let t0 = 0;
 
   const onKey = (e) => {
-    if (busy || document.querySelector('.sheet')) return;
+    if (busy || document.querySelector('.sheet, .lesson-overlay')) return;
     if (e.key === 'ArrowLeft') answer('judgment');
     if (e.key === 'ArrowRight') answer('fact');
   };

@@ -3,7 +3,7 @@
 
 import { initTelegram, backButton, mainButton, settingsButton } from './telegram.js';
 import { loadState, saveState, emptyState } from './storage.js';
-import { track } from './analytics.js';
+import { track, setContext } from './analytics.js';
 import { h } from './ui.js';
 import * as screens from './screens.js';
 
@@ -19,6 +19,8 @@ const ctx = {
   character: (key) => ctx.content.characters[key],
   isUnlocked: (id) => id === 1 || Boolean(ctx.state.levels[id - 1] && ctx.state.levels[id - 1].done),
   allDone: () => ctx.content.levels.every((l) => ctx.state.levels[l.id] && ctx.state.levels[l.id].done),
+  lessonsOn: () => ctx.state.path === 'learn',
+  setPath,
   newRun,
   record,
   finishLevel,
@@ -27,17 +29,30 @@ const ctx = {
 };
 
 let cleanup = null;
+let navId = 0;
 
 function go(name, params = {}) {
   if (typeof cleanup === 'function') cleanup();
   cleanup = null;
   backButton.hide();
   mainButton.hide();
-  document.querySelectorAll('.sheet, .sheet-backdrop, .confetti, .toast').forEach((n) => n.remove());
+  document.querySelectorAll('.sheet, .sheet-backdrop, .confetti, .toast, .lesson-overlay').forEach((n) => n.remove());
   root.replaceChildren();
   root.className = '';
   window.scrollTo(0, 0);
-  cleanup = screens[name](root, params, ctx);
+  // Экран может сам перенаправить на другой (например, уровень → урок).
+  // Тогда очистка берётся у последнего открытого экрана.
+  const my = ++navId;
+  const result = screens[name](root, params, ctx);
+  if (my === navId) cleanup = result;
+}
+
+function setPath(path, source) {
+  const prev = ctx.state.path;
+  ctx.state.path = path;
+  ctx.save();
+  setContext({ path });
+  track(source === 'welcome' ? 'path_chosen' : 'path_changed', { path, prev });
 }
 
 /* ---------- Прогон уровня ---------- */
@@ -124,6 +139,7 @@ function resetProgress() {
   const fresh = emptyState();
   fresh.welcomed = true;
   fresh.settings = ctx.state.settings;
+  fresh.path = ctx.state.path; // выбранный путь сохраняется, уроки покажутся снова
   ctx.state = fresh;
   ctx.save();
 }
@@ -147,11 +163,17 @@ async function boot() {
   ctx.state = await loadState();
   document.title = `${ctx.content.app.title} — ${ctx.content.app.subtitle}`;
 
+  // Прошли приветствие до появления развилки — считаем, что выбрали практику.
+  if (ctx.state.welcomed && !ctx.state.path) ctx.state.path = 'practice';
+  setContext({ path: ctx.state.path });
+
   settingsButton.show(() => screens.openSettings(ctx));
   track('app_open', { resumed_level: ctx.state.run ? ctx.state.run.level : null });
 
+  const lesson = ctx.state.lesson;
   if (!ctx.state.welcomed) go('welcome');
   else if (ctx.state.run) go('level', { id: ctx.state.run.level });
+  else if (lesson && !lesson.away && ctx.isUnlocked(lesson.level)) go('lesson', { id: lesson.level, source: lesson.source });
   else go('map');
 }
 
