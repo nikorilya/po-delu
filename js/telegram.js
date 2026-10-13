@@ -175,4 +175,12 @@ export const cloud = {
       } catch { resolve(false); }
     });
   },
+  remove(key) {
+    return new Promise((resolve) => {
+      if (!this.available) return resolve(false);
+      try {
+        tg.CloudStorage.removeItem(key, (err, ok) => resolve(!err && ok));
+      } catch { resolve(false); }
+    });
+  },
 };

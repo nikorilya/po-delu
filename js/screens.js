@@ -14,6 +14,12 @@ import * as dialog from './levels/dialog.js';
 
 const MODULES = { swipe, fix, build, dialog };
 
+export { plans, plan } from './planner.js';
+
+/** Открывает «Подготовь разговор»: список, если разговоры уже есть, иначе сразу новый. */
+const openPlanner = (ctx, from) =>
+  ctx.go((ctx.state.plans || []).length ? 'plans' : 'plan', { from });
+
 const askConfirm = (ui, message) =>
   (canNativeConfirm() ? confirmDialog(message) : confirmSheet(message, ui.confirmReset, ui.cancel));
 
@@ -86,6 +92,7 @@ export function map(root, _p, ctx) {
       h('span', { class: 'map-progress-text' }, star1(), `${starsTotal} из ${levels.length * 3}`),
     ),
     ctx.allDone() ? profileTeaser(ctx) : null,
+    ctx.plannerOn() ? plannerTeaser(ctx) : null,
     h('ol', { class: 'path' }, levels.map((L) => levelCard(L, ctx))),
     h('button', { class: 'link-btn map-about', onclick: () => ctx.go('about') }, ui.aboutLink),
   );
@@ -138,6 +145,16 @@ function levelMeta(L, status, inRun, ctx) {
 }
 
 const lessonPending = (L, ctx) => Boolean(L.lesson) && ctx.lessonsOn() && !ctx.state.lessonsSeen[L.id];
+
+function plannerTeaser(ctx) {
+  const P = ctx.content.planner;
+  const n = (ctx.state.plans || []).length;
+  return h('button', { class: 'teaser teaser--plain', onclick: () => openPlanner(ctx, 'map') },
+    h('span', { class: 'teaser-label' }, n ? fmt(ctx.content.ui.plannerList, { n }) : P.title),
+    h('span', { class: 'teaser-text' }, n ? P.title : P.teaser),
+    icon('arrowRight', 20, 'teaser-arrow'),
+  );
+}
 
 function profileTeaser(ctx) {
   const p = computeProfile(ctx);
@@ -407,6 +424,7 @@ export function result(root, _p, ctx) {
       h('h1', { class: 'profile-name' }, h('span', null, p.profile.name), h('span', { class: 'profile-emoji', 'aria-hidden': 'true' }, p.profile.emoji)),
       h('p', { class: 'profile-tagline' }, p.profile.tagline),
     ),
+    plannerCard(ctx),
     p.top.length ? h('section', { class: 'card' },
       h('h2', { class: 'section-title' }, ui.topErrors),
       h('ul', { class: 'bars' }, p.top.map(([t, n]) =>
@@ -433,6 +451,18 @@ export function result(root, _p, ctx) {
       h('button', { class: 'btn btn-secondary btn-block', onclick: () => restart(ctx) }, icon('restart', 20), ui.restart),
     ),
     authorCard(ctx),
+  );
+}
+
+function plannerCard(ctx) {
+  const P = ctx.content.planner;
+  const ui = ctx.content.ui;
+  const n = (ctx.state.plans || []).length;
+  return h('section', { class: 'plan-cta' },
+    h('h2', { class: 'plan-cta-title' }, P.title),
+    h('p', { class: 'plan-cta-text' }, P.teaser),
+    h('button', { class: 'btn btn-primary plan-cta-btn', onclick: () => openPlanner(ctx, 'result') },
+      n ? fmt(ui.plannerList, { n }) : ui.plannerOpen),
   );
 }
 

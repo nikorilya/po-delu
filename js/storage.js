@@ -16,6 +16,7 @@ export function emptyState() {
     settings: { timerSwipe: true, timerDialog: true },
     levels: {},   // id -> { done, stars, bestScore, lastScore, maxScore, errors, answered, wrong, extra }
     run: null,    // незаконченный уровень, см. app.js → newRun()
+    plans: [],    // «Подготовь разговор»: только список { id, name, mode, done, updatedAt }; тексты — в отдельных ключах
     updatedAt: 0,
   };
 }
@@ -64,7 +65,60 @@ export function flush() {
   cloud.set(KEY, raw);
 }
 
+/* ---------- Планы разговоров ----------
+   Каждый план — отдельный ключ: так пять планов не упираются в лимит 4096 символов
+   на одно значение CloudStorage. Тексты не уходят никуда, кроме хранилища самого пользователя. */
+
+const planKey = (id) => `podelu_plan_${id}`;
+const planTimers = new Map();
+const planPending = new Map();
+
+function parsePlan(raw) {
+  if (!raw) return null;
+  try { const p = JSON.parse(raw); return p && p.id ? p : null; } catch { return null; }
+}
+
+export async function loadPlan(id) {
+  let local = null;
+  try { local = parsePlan(localStorage.getItem(planKey(id))); } catch { /* нет доступа */ }
+  const remote = parsePlan(await cloud.get(planKey(id)));
+  return [remote, local].filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt)[0] || null;
+}
+
+export function savePlan(plan) {
+  plan.updatedAt = Date.now();
+  const raw = JSON.stringify(plan);
+  try { localStorage.setItem(planKey(plan.id), raw); } catch { /* приватный режим */ }
+  planPending.set(plan.id, raw);
+  clearTimeout(planTimers.get(plan.id));
+  planTimers.set(plan.id, setTimeout(() => flushPlan(plan.id), 600));
+}
+
+function flushPlan(id) {
+  clearTimeout(planTimers.get(id));
+  const raw = planPending.get(id);
+  planPending.delete(id);
+  if (!raw) return;
+  if (raw.length > CLOUD_LIMIT) {
+    console.warn('[storage] план больше лимита CloudStorage, сохранён только локально');
+    return;
+  }
+  cloud.set(planKey(id), raw);
+}
+
+export function deletePlan(id) {
+  clearTimeout(planTimers.get(id));
+  planPending.delete(id);
+  try { localStorage.removeItem(planKey(id)); } catch { /* нет доступа */ }
+  cloud.remove(planKey(id));
+}
+
+function flushAll() {
+  flush();
+  for (const id of [...planPending.keys()]) flushPlan(id);
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') flush();
+  if (document.visibilityState === 'hidden') flushAll();
 });
-window.addEventListener('pagehide', flush);
+window.addEventListener('pagehide', flushAll);

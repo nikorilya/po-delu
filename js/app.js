@@ -20,6 +20,8 @@ const ctx = {
   isUnlocked: (id) => id === 1 || Boolean(ctx.state.levels[id - 1] && ctx.state.levels[id - 1].done),
   allDone: () => ctx.content.levels.every((l) => ctx.state.levels[l.id] && ctx.state.levels[l.id].done),
   lessonsOn: () => ctx.state.path === 'learn',
+  // «Подготовь разговор» открывается после прохождения и остаётся, пока есть сохранённые разговоры.
+  plannerOn: () => ctx.allDone() || (ctx.state.plans || []).length > 0,
   setPath,
   newRun,
   record,
@@ -140,6 +142,7 @@ function resetProgress() {
   fresh.welcomed = true;
   fresh.settings = ctx.state.settings;
   fresh.path = ctx.state.path; // выбранный путь сохраняется, уроки покажутся снова
+  fresh.plans = ctx.state.plans || []; // подготовленные разговоры — рабочий инструмент, их не сбрасываем
   ctx.state = fresh;
   ctx.save();
 }

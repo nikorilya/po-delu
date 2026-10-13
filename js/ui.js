@@ -55,6 +55,8 @@ const ICONS = {
   clock: '<circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" />',
   link: '<path d="M14 5h5v5M19 5l-8 8" /><path d="M17 14v4a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 5 18V8.5A1.5 1.5 0 0 1 6.5 7H10" />',
   chat: '<path d="M20 12a7.5 7.5 0 0 1-11 6.6L4.5 20l1.4-4.3A7.5 7.5 0 1 1 20 12z" />',
+  alert: '<circle cx="12" cy="12" r="8.5" /><path d="M12 7.8v5" /><path d="M12 16.3h.01" />',
+  trash: '<path d="M5 7h14" /><path d="M10 7V5h4v2" /><path d="M7 7l.8 11.2A1.5 1.5 0 0 0 9.3 19.6h5.4a1.5 1.5 0 0 0 1.5-1.4L17 7" /><path d="M10.5 10.5v5.5M13.5 10.5v5.5" />',
   help: '<circle cx="12" cy="12" r="8.5" /><path d="M9.6 9.4a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.7" /><path d="M12 16.9h.01" />',
   book: '<path d="M4.5 5.5A1.5 1.5 0 0 1 6 4h4.5A1.5 1.5 0 0 1 12 5.5V20a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 1 4.5 17z" /><path d="M19.5 5.5A1.5 1.5 0 0 0 18 4h-4.5A1.5 1.5 0 0 0 12 5.5V20a1.5 1.5 0 0 1 1.5-1.5H18a1.5 1.5 0 0 0 1.5-1.5z" />',
 };
@@ -189,6 +191,23 @@ export function confirmSheet(message, okText, cancelText) {
     ), { onClose: () => resolve(answer) });
     setTimeout(() => cancelBtn.focus({ preventScroll: true }), 60);
   });
+}
+
+/** Копирует текст: Clipboard API, а если он недоступен — через скрытое поле. */
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch { /* пробуем запасной способ */ }
+  try {
+    const ta = h('textarea', { readonly: true, style: { position: 'fixed', top: '-1000px', opacity: '0' } });
+    ta.value = text;
+    document.body.append(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
 }
 
 export function toast(text) {
